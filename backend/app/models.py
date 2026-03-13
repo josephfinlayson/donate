@@ -107,3 +107,27 @@ class OptimizationRun(Base):
     completed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+
+
+class ABTest(Base):
+    """A/B test configuration — splits traffic between prompt versions."""
+    __tablename__ = "ab_tests"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    name: Mapped[str] = mapped_column(String(100))
+    status: Mapped[str] = mapped_column(
+        String(20), default="active"
+    )  # active, paused, completed
+    variant_a_version: Mapped[str] = mapped_column(String(50))
+    variant_b_version: Mapped[str] = mapped_column(String(50))
+    traffic_split: Mapped[float] = mapped_column(
+        Float, default=0.5
+    )  # fraction going to variant B
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    ended_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )

@@ -11,6 +11,20 @@ interface Message {
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8080";
 
+function renderMarkdown(text: string) {
+  // Split on **bold** and *italic* patterns, return React elements
+  const parts = text.split(/(\*\*[^*]+\*\*|\*[^*]+\*)/g);
+  return parts.map((part, i) => {
+    if (part.startsWith("**") && part.endsWith("**")) {
+      return <strong key={i}>{part.slice(2, -2)}</strong>;
+    }
+    if (part.startsWith("*") && part.endsWith("*")) {
+      return <em key={i}>{part.slice(1, -1)}</em>;
+    }
+    return part;
+  });
+}
+
 export function Chat() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -18,6 +32,7 @@ export function Chat() {
   const [isLoading, setIsLoading] = useState(true);
   const socketRef = useRef<Socket | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const sessionStarted = useRef(false);
 
   useEffect(() => {
     const socket = io(BACKEND_URL, { transports: ["websocket", "polling"] });
@@ -25,7 +40,10 @@ export function Chat() {
 
     socket.on("connect", () => {
       setIsConnected(true);
-      socket.emit("start_session", {});
+      if (!sessionStarted.current) {
+        sessionStarted.current = true;
+        socket.emit("start_session", {});
+      }
     });
 
     socket.on("session_started", (data: { session_id: string; message: string }) => {
@@ -93,7 +111,7 @@ export function Chat() {
                     : "bg-stone-100 text-stone-800"
                 }`}
               >
-                {msg.content}
+                {msg.role === "bot" ? renderMarkdown(msg.content) : msg.content}
               </div>
             </div>
             {msg.checkoutUrl && (
@@ -112,10 +130,12 @@ export function Chat() {
           </div>
         ))}
 
-        {isLoading && messages.length > 0 && (
+        {isLoading && (
           <div className="flex justify-start">
             <div className="bg-stone-100 rounded-2xl px-4 py-2.5 text-sm text-stone-400">
-              <span className="animate-pulse">Thinking...</span>
+              <span className="animate-pulse">
+                {messages.length === 0 ? "Starting conversation..." : "Thinking..."}
+              </span>
             </div>
           </div>
         )}
@@ -135,9 +155,9 @@ export function Chat() {
           <input
             type="text"
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) => setInput(e.target.value.slice(0, 2000))}
             placeholder={isConnected ? "Type a message..." : "Connecting..."}
-            disabled={!isConnected || isLoading}
+            disabled={!isConnected}
             className="flex-1 px-4 py-2.5 bg-stone-50 border border-stone-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent disabled:opacity-50"
           />
           <button

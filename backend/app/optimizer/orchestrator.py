@@ -13,9 +13,11 @@ writes commit messages explaining what changed and why, and
 adjusts hyperparameters for the next run.
 """
 
+import asyncio
 import json
 import os
 from datetime import datetime, timezone
+from functools import partial
 
 import httpx
 
@@ -112,6 +114,7 @@ async def run_optimization_cycle(trigger_reason: str = "manual") -> dict:
     5. Return results
     """
     started_at = datetime.now(timezone.utc)
+    loop = asyncio.get_event_loop()
 
     # 1. Fetch data
     sessions = await fetch_sessions()
@@ -124,12 +127,15 @@ async def run_optimization_cycle(trigger_reason: str = "manual") -> dict:
     stats = await fetch_stats()
     current_prompt = load_current_prompt()
 
-    # 2. Run GEPA
+    # 2. Run GEPA (sync/blocking — run in thread to avoid blocking event loop)
     try:
-        optimization_result = run_gepa_optimization(
-            sessions=sessions,
-            current_prompt=current_prompt,
-            max_metric_calls=min(len(sessions) * 3, 300),
+        optimization_result = await loop.run_in_executor(
+            None,
+            partial(
+                run_gepa_optimization,
+                sessions=sessions,
+                current_prompt=current_prompt,
+            ),
         )
     except Exception as e:
         return {
@@ -143,12 +149,16 @@ async def run_optimization_cycle(trigger_reason: str = "manual") -> dict:
         optimization_result, stats, current_prompt
     )
 
-    # 4. Commit
-    new_version = commit_optimization_run(
-        current_prompt=current_prompt,
-        optimization_result=optimization_result,
-        decision=reasoning,
-        deploy=deploy,
+    # 4. Commit (sync/blocking git ops — run in thread)
+    new_version = await loop.run_in_executor(
+        None,
+        partial(
+            commit_optimization_run,
+            current_prompt=current_prompt,
+            optimization_result=optimization_result,
+            decision=reasoning,
+            deploy=deploy,
+        ),
     )
 
     duration = (datetime.now(timezone.utc) - started_at).total_seconds()

@@ -83,14 +83,12 @@ def composite_metric(gold, pred, trace=None, pred_name=None, pred_trace=None) ->
 def run_gepa_optimization(
     sessions: list[dict],
     current_prompt: dict,
-    max_metric_calls: int = 300,
 ) -> dict:
     """Run GEPA optimization on accumulated session data.
 
     Args:
         sessions: List of session records from the API
         current_prompt: Current prompt JSON (with version, instructions, etc.)
-        max_metric_calls: Budget for GEPA metric evaluations
 
     Returns:
         Dict with optimization results:
