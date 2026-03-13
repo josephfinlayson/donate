@@ -36,6 +36,10 @@ services:
       FRONTEND_URL: http://localhost:3000
       SITE_URL: http://localhost:3000
       REDIS_URL: redis://redis:6379/0
+      API_URL: http://localhost:8000
+      PROMPT_REPO_DIR: /app/prompt_repo
+    volumes:
+      - prompt_repo:/app/prompt_repo
     depends_on:
       db:
         condition: service_healthy
@@ -51,3 +55,4 @@ services:
 
 volumes:
   pgdata:
+  prompt_repo:

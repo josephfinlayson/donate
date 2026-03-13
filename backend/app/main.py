@@ -529,6 +529,37 @@ async def get_stats():
         }
 
 
+# --- Optimization API ---
+
+
+@fastapi_app.post("/api/optimize")
+async def trigger_optimization(request: Request):
+    """Manually trigger an optimization run."""
+    from .optimizer.orchestrator import run_optimization_cycle
+
+    body = await request.json() if request.headers.get("content-type") == "application/json" else {}
+    trigger_reason = body.get("reason", "manual")
+
+    result = await run_optimization_cycle(trigger_reason=trigger_reason)
+
+    # Record the run in the database
+    if result.get("status") == "completed":
+        async with async_session() as db:
+            run = OptimizationRun(
+                prompt_version_before=result.get("version_before", ""),
+                prompt_version_after=result.get("version_after"),
+                sessions_count=result.get("sessions_count", 0),
+                trigger_reason=trigger_reason,
+                status="completed",
+                deployed=result.get("deployed", False),
+                run_metadata=result.get("metrics"),
+            )
+            db.add(run)
+            await db.commit()
+
+    return result
+
+
 # --- Health Check ---
 
 
