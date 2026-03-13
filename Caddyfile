@@ -11,6 +11,10 @@ donate.innocentspark.com {
         reverse_proxy backend:8000
     }
 
+    handle /webhooks/* {
+        reverse_proxy backend:8000
+    }
+
     handle /health {
         reverse_proxy backend:8000
     }
