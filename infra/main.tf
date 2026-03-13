@@ -35,6 +35,10 @@ resource "digitalocean_droplet" "app" {
     site_url      = local.site_url
     domain        = local.domain
   })
+
+  lifecycle {
+    ignore_changes = [user_data]
+  }
 }
 
 # --- Assign reserved IP to droplet ---
