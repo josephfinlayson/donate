@@ -1,4 +1,17 @@
 services:
+  redis:
+    image: redis:7-alpine
+    expose:
+      - "6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
   backend:
     build: ./backend
     expose:
@@ -9,11 +22,14 @@ services:
       DATABASE_URL: ${DATABASE_URL}
       FRONTEND_URL: ${SITE_URL}
       SITE_URL: ${SITE_URL}
-      REDIS_URL: ${REDIS_URL}
+      REDIS_URL: redis://redis:6379/0
       API_URL: http://localhost:8000
       PROMPT_REPO_DIR: /app/prompt_repo
     volumes:
       - prompt_repo:/app/prompt_repo
+    depends_on:
+      redis:
+        condition: service_healthy
     restart: unless-stopped
 
   frontend:
@@ -41,5 +57,6 @@ services:
 
 volumes:
   prompt_repo:
+  redis_data:
   caddy_data:
   caddy_config:

@@ -36,18 +36,7 @@ resource "digitalocean_database_user" "donate" {
   name       = "donate"
 }
 
-# --- Managed Redis ---
-
-resource "digitalocean_database_cluster" "redis" {
-  name       = "donate-redis"
-  engine     = "redis"
-  version    = "7"
-  size       = "db-s-1vcpu-1gb"
-  region     = var.region
-  node_count = 1
-}
-
-# --- Droplet ---
+# --- Droplet (Redis runs as Docker container on the droplet) ---
 
 locals {
   site_url = var.domain != "" ? "https://${var.domain}" : "http://${digitalocean_reserved_ip.app.ip_address}"
@@ -63,7 +52,7 @@ resource "digitalocean_droplet" "app" {
 
   user_data = templatefile("${path.module}/cloud-init.yml", {
     database_url  = "postgresql+asyncpg://${digitalocean_database_user.donate.name}:${digitalocean_database_user.donate.password}@${digitalocean_database_cluster.postgres.private_host}:${digitalocean_database_cluster.postgres.port}/${digitalocean_database_db.donate.name}?ssl=require"
-    redis_url     = "rediss://${digitalocean_database_cluster.redis.private_host}:${digitalocean_database_cluster.redis.port}"
+    redis_url     = "redis://redis:6379/0"
     anthropic_key = var.anthropic_api_key
     stripe_key    = var.stripe_key
     site_url      = local.site_url
@@ -72,7 +61,6 @@ resource "digitalocean_droplet" "app" {
 
   depends_on = [
     digitalocean_database_cluster.postgres,
-    digitalocean_database_cluster.redis,
   ]
 }
 
@@ -129,15 +117,6 @@ resource "digitalocean_firewall" "app" {
 
 resource "digitalocean_database_firewall" "postgres" {
   cluster_id = digitalocean_database_cluster.postgres.id
-
-  rule {
-    type  = "droplet"
-    value = digitalocean_droplet.app.id
-  }
-}
-
-resource "digitalocean_database_firewall" "redis" {
-  cluster_id = digitalocean_database_cluster.redis.id
 
   rule {
     type  = "droplet"
