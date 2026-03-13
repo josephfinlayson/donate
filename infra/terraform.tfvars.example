@@ -1,0 +1,6 @@
+do_token            = "dop_v1_..."
+anthropic_api_key   = "sk-ant-api03-..."
+stripe_key          = "sk_test_..."
+region              = "nyc1"
+domain              = ""  # Leave empty to use droplet IP, or set e.g. "donate.example.com"
+ssh_key_fingerprint = ""  # Leave empty to use all SSH keys on your DO account

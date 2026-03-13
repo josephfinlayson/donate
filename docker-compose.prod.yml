@@ -1,0 +1,45 @@
+services:
+  backend:
+    build: ./backend
+    expose:
+      - "8000"
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      FRONTEND_URL: ${SITE_URL}
+      SITE_URL: ${SITE_URL}
+      REDIS_URL: ${REDIS_URL}
+      API_URL: http://localhost:8000
+      PROMPT_REPO_DIR: /app/prompt_repo
+    volumes:
+      - prompt_repo:/app/prompt_repo
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+      args:
+        NEXT_PUBLIC_BACKEND_URL: ""
+    expose:
+      - "3000"
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+    restart: unless-stopped
+
+volumes:
+  prompt_repo:
+  caddy_data:
+  caddy_config:
