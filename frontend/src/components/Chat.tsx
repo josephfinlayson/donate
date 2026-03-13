@@ -102,6 +102,7 @@ export function Chat() {
                   href={msg.checkoutUrl}
                   target="_blank"
                   rel="noopener noreferrer"
+                  onClick={() => socketRef.current?.emit("link_clicked", {})}
                   className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-xl text-sm font-medium hover:bg-emerald-100 transition"
                 >
                   💚 Donate now

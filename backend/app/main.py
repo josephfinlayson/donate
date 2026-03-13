@@ -6,19 +6,23 @@ from datetime import datetime, timezone
 
 import socketio
 import stripe
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import select
+from fastapi.responses import JSONResponse
+from sqlalchemy import select, func, Integer
 
 from .chat import get_bot_response, load_prompt
 from .database import async_session, engine, Base
-from .models import ChatSession
+from .metrics import composite_score, session_to_record
+from .models import ChatSession, FunnelEvent, OptimizationRun
 from .stripe_service import create_donation_checkout
 
 stripe.api_key = os.getenv("STRIPE")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
-
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
+
+# Optimization trigger thresholds
+BATCH_THRESHOLD = int(os.getenv("OPTIMIZATION_BATCH_THRESHOLD", "200"))
 
 # Track active sessions: sid -> session_id mapping
 active_sessions: dict[str, str] = {}
@@ -41,17 +45,81 @@ fastapi_app.add_middleware(
     allow_headers=["*"],
 )
 
-# Socket.IO server — uses the default /socket.io path
+# Socket.IO server
 sio = socketio.AsyncServer(
     async_mode="asgi",
     cors_allowed_origins=[FRONTEND_URL],
     logger=False,
     engineio_logger=False,
 )
-
-# The top-level ASGI app: Socket.IO wraps FastAPI
-# Socket.IO intercepts /socket.io/* requests, everything else goes to FastAPI
 app = socketio.ASGIApp(sio, fastapi_app)
+
+
+# --- Helpers ---
+
+
+async def record_funnel_event(
+    session_id: str, event_type: str, metadata: dict | None = None
+):
+    """Record a funnel event with timestamp."""
+    async with async_session() as db:
+        event = FunnelEvent(
+            session_id=uuid.UUID(session_id),
+            event_type=event_type,
+            event_data=metadata,
+        )
+        db.add(event)
+        await db.commit()
+
+
+async def compute_and_store_score(session_id: str):
+    """Compute composite metric and store on session."""
+    async with async_session() as db:
+        result = await db.execute(
+            select(ChatSession).where(ChatSession.id == uuid.UUID(session_id))
+        )
+        session = result.scalar_one_or_none()
+        if session:
+            record = session_to_record(session)
+            session.composite_score = composite_score(record)
+            await db.commit()
+            return session.composite_score
+    return None
+
+
+async def check_optimization_trigger():
+    """Check if we should trigger an optimization run.
+
+    Triggers:
+    1. Batch threshold: N completed sessions since last optimization
+    2. Donation event: immediate trigger on donation (rare, high-signal)
+
+    Returns trigger reason or None.
+    """
+    async with async_session() as db:
+        # Get the last optimization run
+        last_run = await db.execute(
+            select(OptimizationRun)
+            .order_by(OptimizationRun.created_at.desc())
+            .limit(1)
+        )
+        last_run = last_run.scalar_one_or_none()
+
+        # Count completed sessions since last run
+        query = select(func.count(ChatSession.id)).where(
+            ChatSession.status == "completed",
+            ChatSession.composite_score.is_not(None),
+        )
+        if last_run:
+            query = query.where(ChatSession.completed_at > last_run.created_at)
+
+        result = await db.execute(query)
+        sessions_since = result.scalar()
+
+        if sessions_since >= BATCH_THRESHOLD:
+            return "batch_threshold"
+
+    return None
 
 
 # --- Socket.IO Events ---
@@ -65,7 +133,6 @@ async def connect(sid, environ):
 @sio.event
 async def start_session(sid, data):
     """Initialize a new chat session."""
-    print(f"start_session called for {sid}", flush=True)
     session_id = str(uuid.uuid4())
     active_sessions[sid] = session_id
 
@@ -104,7 +171,7 @@ async def start_session(sid, data):
         {"session_id": session_id, "message": opening},
         room=sid,
     )
-    print(f"Session {session_id} started, greeting sent", flush=True)
+    print(f"Session {session_id} started", flush=True)
 
 
 @sio.event
@@ -164,6 +231,7 @@ async def send_message(sid, data):
                 session.payment_link_shown = True
                 checkout_url = checkout["checkout_url"]
                 await db.commit()
+                await record_funnel_event(session_id, "payment_link_shown")
             except Exception as e:
                 print(f"Stripe checkout creation failed: {e}", flush=True)
 
@@ -175,8 +243,27 @@ async def send_message(sid, data):
 
 
 @sio.event
+async def link_clicked(sid, data):
+    """Track when user clicks the donation link."""
+    session_id = active_sessions.get(sid)
+    if not session_id:
+        return
+
+    async with async_session() as db:
+        result = await db.execute(
+            select(ChatSession).where(ChatSession.id == uuid.UUID(session_id))
+        )
+        session = result.scalar_one_or_none()
+        if session and not session.clicked_payment_link:
+            session.clicked_payment_link = True
+            await db.commit()
+            await record_funnel_event(session_id, "clicked_link")
+            print(f"Session {session_id}: user clicked payment link", flush=True)
+
+
+@sio.event
 async def disconnect(sid):
-    """Handle client disconnect — mark session completed."""
+    """Handle client disconnect — mark session completed and compute score."""
     session_id = active_sessions.pop(sid, None)
     if not session_id:
         return
@@ -191,10 +278,17 @@ async def disconnect(sid):
             session.completed_at = datetime.now(timezone.utc)
             await db.commit()
 
-    print(f"Session {session_id} completed (disconnect)", flush=True)
+    # Compute composite score
+    score = await compute_and_store_score(session_id)
+    print(f"Session {session_id} completed (score={score})", flush=True)
+
+    # Check if we should trigger optimization
+    trigger = await check_optimization_trigger()
+    if trigger:
+        print(f"OPTIMIZATION TRIGGER: {trigger}", flush=True)
 
 
-# --- Stripe Webhook ---
+# --- Stripe Webhooks ---
 
 
 @fastapi_app.post("/webhooks/stripe")
@@ -208,41 +302,231 @@ async def stripe_webhook(request: Request):
                 payload, sig_header, STRIPE_WEBHOOK_SECRET
             )
         else:
-            # Dev mode: parse without signature verification
             event = stripe.Event.construct_from(
                 json.loads(payload), stripe.api_key
             )
     except (ValueError, stripe.error.SignatureVerificationError) as e:
         print(f"Webhook error: {e}", flush=True)
-        return {"error": str(e)}, 400
+        return JSONResponse({"error": str(e)}, status_code=400)
 
-    if event["type"] == "checkout.session.completed":
-        checkout_session = event["data"]["object"]
-        chat_session_id = checkout_session.get("metadata", {}).get("chat_session_id")
+    event_type = event["type"]
+    obj = event["data"]["object"]
+    chat_session_id = obj.get("metadata", {}).get("chat_session_id")
 
-        if chat_session_id:
-            amount = checkout_session.get("amount_total", 0) / 100  # cents to dollars
+    if not chat_session_id:
+        return {"status": "ok"}
 
-            async with async_session() as db:
-                result = await db.execute(
-                    select(ChatSession).where(
-                        ChatSession.id == uuid.UUID(chat_session_id)
-                    )
+    if event_type == "checkout.session.completed":
+        amount = obj.get("amount_total", 0) / 100
+
+        async with async_session() as db:
+            result = await db.execute(
+                select(ChatSession).where(
+                    ChatSession.id == uuid.UUID(chat_session_id)
                 )
-                session = result.scalar_one_or_none()
-                if session:
-                    session.completed_payment = True
-                    session.donated = True
-                    session.donation_amount_usd = amount
-                    session.reward_resolved_at = datetime.now(timezone.utc)
-                    await db.commit()
-                    print(
-                        f"Donation recorded: session={chat_session_id}, "
-                        f"amount=${amount}",
-                        flush=True,
-                    )
+            )
+            session = result.scalar_one_or_none()
+            if session:
+                session.started_checkout = True
+                session.completed_payment = True
+                session.donated = True
+                session.donation_amount_usd = amount
+                session.reward_resolved_at = datetime.now(timezone.utc)
+                await db.commit()
+
+        await record_funnel_event(
+            chat_session_id,
+            "completed_payment",
+            {"amount_usd": amount},
+        )
+
+        # Recompute score with donation data
+        score = await compute_and_store_score(chat_session_id)
+        print(
+            f"DONATION: session={chat_session_id}, amount=${amount}, score={score}",
+            flush=True,
+        )
+
+        # Immediate optimization trigger on donation
+        print("OPTIMIZATION TRIGGER: donation_event", flush=True)
+
+    elif event_type == "checkout.session.expired":
+        async with async_session() as db:
+            result = await db.execute(
+                select(ChatSession).where(
+                    ChatSession.id == uuid.UUID(chat_session_id)
+                )
+            )
+            session = result.scalar_one_or_none()
+            if session:
+                session.started_checkout = True
+                session.reward_resolved_at = datetime.now(timezone.utc)
+                await db.commit()
+
+        await record_funnel_event(chat_session_id, "checkout_expired")
+        await compute_and_store_score(chat_session_id)
 
     return {"status": "ok"}
+
+
+# --- Data Export API (for optimizer) ---
+
+
+@fastapi_app.get("/api/sessions")
+async def list_sessions(
+    status: str | None = Query(None),
+    prompt_version: str | None = Query(None),
+    has_score: bool = Query(False),
+    limit: int = Query(100, le=500),
+    offset: int = Query(0),
+):
+    """Export session records for the optimization pipeline."""
+    async with async_session() as db:
+        query = select(ChatSession).order_by(ChatSession.created_at.desc())
+
+        if status:
+            query = query.where(ChatSession.status == status)
+        if prompt_version:
+            query = query.where(ChatSession.prompt_version == prompt_version)
+        if has_score:
+            query = query.where(ChatSession.composite_score.is_not(None))
+
+        query = query.offset(offset).limit(limit)
+        result = await db.execute(query)
+        sessions = result.scalars().all()
+
+        return {
+            "sessions": [session_to_record(s) for s in sessions],
+            "count": len(sessions),
+        }
+
+
+@fastapi_app.get("/api/sessions/{session_id}")
+async def get_session(session_id: str):
+    """Get a single session with full details including funnel events."""
+    async with async_session() as db:
+        result = await db.execute(
+            select(ChatSession).where(ChatSession.id == uuid.UUID(session_id))
+        )
+        session = result.scalar_one_or_none()
+        if not session:
+            return JSONResponse({"error": "Session not found"}, status_code=404)
+
+        # Get funnel events
+        events_result = await db.execute(
+            select(FunnelEvent)
+            .where(FunnelEvent.session_id == uuid.UUID(session_id))
+            .order_by(FunnelEvent.created_at)
+        )
+        events = events_result.scalars().all()
+
+        record = session_to_record(session)
+        record["funnel_events"] = [
+            {
+                "event_type": e.event_type,
+                "event_data": e.event_data,
+                "created_at": e.created_at.isoformat(),
+            }
+            for e in events
+        ]
+        return record
+
+
+@fastapi_app.get("/api/stats")
+async def get_stats():
+    """Dashboard stats: session counts, donation rates, scores by prompt version."""
+    async with async_session() as db:
+        # Total sessions
+        total = await db.execute(select(func.count(ChatSession.id)))
+        total_count = total.scalar()
+
+        # Completed sessions
+        completed = await db.execute(
+            select(func.count(ChatSession.id)).where(
+                ChatSession.status == "completed"
+            )
+        )
+        completed_count = completed.scalar()
+
+        # Donations
+        donations = await db.execute(
+            select(func.count(ChatSession.id)).where(ChatSession.donated == True)
+        )
+        donation_count = donations.scalar()
+
+        # Total donation amount
+        total_donated = await db.execute(
+            select(func.sum(ChatSession.donation_amount_usd)).where(
+                ChatSession.donated == True
+            )
+        )
+        total_donated_usd = total_donated.scalar() or 0.0
+
+        # Average composite score
+        avg_score = await db.execute(
+            select(func.avg(ChatSession.composite_score)).where(
+                ChatSession.composite_score.is_not(None)
+            )
+        )
+        avg_composite = avg_score.scalar()
+
+        # Per-prompt-version stats
+        version_stats = await db.execute(
+            select(
+                ChatSession.prompt_version,
+                func.count(ChatSession.id).label("count"),
+                func.avg(ChatSession.composite_score).label("avg_score"),
+                func.sum(
+                    func.cast(ChatSession.donated, Integer)
+                ).label("donations"),
+            )
+            .where(ChatSession.status == "completed")
+            .group_by(ChatSession.prompt_version)
+        )
+        versions = [
+            {
+                "version": row.prompt_version,
+                "sessions": row.count,
+                "avg_score": round(row.avg_score, 3) if row.avg_score else None,
+                "donations": row.donations or 0,
+            }
+            for row in version_stats
+        ]
+
+        # Sessions since last optimization
+        last_run = await db.execute(
+            select(OptimizationRun)
+            .order_by(OptimizationRun.created_at.desc())
+            .limit(1)
+        )
+        last_opt = last_run.scalar_one_or_none()
+
+        sessions_since_opt_query = select(func.count(ChatSession.id)).where(
+            ChatSession.status == "completed"
+        )
+        if last_opt:
+            sessions_since_opt_query = sessions_since_opt_query.where(
+                ChatSession.completed_at > last_opt.created_at
+            )
+        sessions_since = (await db.execute(sessions_since_opt_query)).scalar()
+
+        return {
+            "total_sessions": total_count,
+            "completed_sessions": completed_count,
+            "donations": donation_count,
+            "donation_rate": (
+                round(donation_count / completed_count, 4)
+                if completed_count > 0
+                else 0
+            ),
+            "total_donated_usd": round(total_donated_usd, 2),
+            "avg_composite_score": (
+                round(avg_composite, 3) if avg_composite else None
+            ),
+            "prompt_versions": versions,
+            "sessions_since_last_optimization": sessions_since,
+            "optimization_threshold": BATCH_THRESHOLD,
+        }
 
 
 # --- Health Check ---
