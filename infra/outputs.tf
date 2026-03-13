@@ -8,12 +8,6 @@ output "app_url" {
   value       = local.site_url
 }
 
-output "postgres_host" {
-  description = "PostgreSQL private hostname"
-  value       = digitalocean_database_cluster.postgres.private_host
-  sensitive   = true
-}
-
 output "ssh_command" {
   description = "SSH into the droplet"
   value       = "ssh root@${digitalocean_reserved_ip.app.ip_address}"

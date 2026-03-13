@@ -9,7 +9,7 @@ interface Message {
   checkoutUrl?: string;
 }
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8080";
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:8080";
 
 function renderMarkdown(text: string) {
   // Split on **bold** and *italic* patterns, return React elements

@@ -1,20 +1,4 @@
 services:
-  db:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_USER: donate
-      POSTGRES_PASSWORD: donate
-      POSTGRES_DB: donate
-    ports:
-      - "5432:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U donate"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
   redis:
     image: redis:7-alpine
     ports:
@@ -32,17 +16,17 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://donate:donate@db:5432/donate
+      DATABASE_URL: sqlite+aiosqlite:////app/data/donate.db
       FRONTEND_URL: http://localhost:3000
       SITE_URL: http://localhost:3000
       REDIS_URL: redis://redis:6379/0
       API_URL: http://localhost:8000
       PROMPT_REPO_DIR: /app/prompt_repo
+      DATA_DIR: /app/data
     volumes:
       - prompt_repo:/app/prompt_repo
+      - app_data:/app/data
     depends_on:
-      db:
-        condition: service_healthy
       redis:
         condition: service_healthy
 
@@ -54,5 +38,5 @@ services:
       NEXT_PUBLIC_BACKEND_URL: http://localhost:8080
 
 volumes:
-  pgdata:
   prompt_repo:
+  app_data:

@@ -4,7 +4,7 @@ python-socketio[asyncio]==5.12.1
 anthropic==0.52.0
 stripe==12.2.0
 sqlalchemy[asyncio]==2.0.40
-asyncpg==0.30.0
+aiosqlite==0.20.0
 alembic==1.15.1
 python-dotenv==1.1.0
 dspy>=2.6.0

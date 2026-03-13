@@ -2,7 +2,6 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text, JSON, ForeignKey
-from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -11,8 +10,8 @@ from .database import Base
 class ChatSession(Base):
     __tablename__ = "chat_sessions"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
     )
     prompt_version: Mapped[str] = mapped_column(String(50), default="v0.1.0")
     messages: Mapped[dict] = mapped_column(JSON, default=list)
@@ -62,11 +61,11 @@ class FunnelEvent(Base):
     """Individual funnel events with timestamps for fine-grained tracking."""
     __tablename__ = "funnel_events"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
     )
-    session_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("chat_sessions.id"), index=True
+    session_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("chat_sessions.id"), index=True
     )
     event_type: Mapped[str] = mapped_column(
         String(50)
@@ -83,8 +82,8 @@ class OptimizationRun(Base):
     """Track optimization runs and their outcomes."""
     __tablename__ = "optimization_runs"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
     )
     prompt_version_before: Mapped[str] = mapped_column(String(50))
     prompt_version_after: Mapped[str | None] = mapped_column(
@@ -113,8 +112,8 @@ class ABTest(Base):
     """A/B test configuration — splits traffic between prompt versions."""
     __tablename__ = "ab_tests"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
     )
     name: Mapped[str] = mapped_column(String(100))
     status: Mapped[str] = mapped_column(

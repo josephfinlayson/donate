@@ -12,8 +12,6 @@ write_files:
   - path: /opt/donate/.env
     permissions: "0600"
     content: |
-      DATABASE_URL=${database_url}
-      REDIS_URL=${redis_url}
       ANTHROPIC_API_KEY=${anthropic_key}
       STRIPE=${stripe_key}
       SITE_URL=${site_url}
@@ -23,4 +21,3 @@ runcmd:
   - systemctl enable docker
   - systemctl start docker
   - mkdir -p /opt/donate/app
-  - echo "Droplet ready. Use deploy.sh to push code." > /opt/donate/README

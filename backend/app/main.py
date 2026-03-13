@@ -261,7 +261,7 @@ async def record_funnel_event(
     """Record a funnel event with timestamp."""
     async with async_session() as db:
         event = FunnelEvent(
-            session_id=uuid.UUID(session_id),
+            session_id=session_id,
             event_type=event_type,
             event_data=metadata,
         )
@@ -273,7 +273,7 @@ async def compute_and_store_score(session_id: str):
     """Compute composite metric and store on session."""
     async with async_session() as db:
         result = await db.execute(
-            select(ChatSession).where(ChatSession.id == uuid.UUID(session_id))
+            select(ChatSession).where(ChatSession.id == session_id)
         )
         session = result.scalar_one_or_none()
         if session:
@@ -338,7 +338,7 @@ async def start_session(sid, data):
 
     async with async_session() as db:
         chat_session = ChatSession(
-            id=uuid.UUID(session_id),
+            id=session_id,
             prompt_version=prompt_data["version"],
             messages=[],
         )
@@ -358,7 +358,7 @@ async def start_session(sid, data):
     ]
     async with async_session() as db:
         result = await db.execute(
-            select(ChatSession).where(ChatSession.id == uuid.UUID(session_id))
+            select(ChatSession).where(ChatSession.id == session_id)
         )
         session = result.scalar_one()
         session.messages = messages
@@ -387,7 +387,7 @@ async def send_message(sid, data):
 
     async with async_session() as db:
         result = await db.execute(
-            select(ChatSession).where(ChatSession.id == uuid.UUID(session_id))
+            select(ChatSession).where(ChatSession.id == session_id)
         )
         session = result.scalar_one()
         messages = list(session.messages)
@@ -461,7 +461,7 @@ async def link_clicked(sid, data):
 
     async with async_session() as db:
         result = await db.execute(
-            select(ChatSession).where(ChatSession.id == uuid.UUID(session_id))
+            select(ChatSession).where(ChatSession.id == session_id)
         )
         session = result.scalar_one_or_none()
         if session and not session.clicked_payment_link:
@@ -480,7 +480,7 @@ async def disconnect(sid):
 
     async with async_session() as db:
         result = await db.execute(
-            select(ChatSession).where(ChatSession.id == uuid.UUID(session_id))
+            select(ChatSession).where(ChatSession.id == session_id)
         )
         session = result.scalar_one_or_none()
         if session and session.status == "active":
@@ -532,7 +532,7 @@ async def stripe_webhook(request: Request):
         async with async_session() as db:
             result = await db.execute(
                 select(ChatSession).where(
-                    ChatSession.id == uuid.UUID(chat_session_id)
+                    ChatSession.id == chat_session_id
                 )
             )
             session = result.scalar_one_or_none()
@@ -564,7 +564,7 @@ async def stripe_webhook(request: Request):
         async with async_session() as db:
             result = await db.execute(
                 select(ChatSession).where(
-                    ChatSession.id == uuid.UUID(chat_session_id)
+                    ChatSession.id == chat_session_id
                 )
             )
             session = result.scalar_one_or_none()
@@ -616,7 +616,7 @@ async def get_session(session_id: str):
     """Get a single session with full details including funnel events."""
     async with async_session() as db:
         result = await db.execute(
-            select(ChatSession).where(ChatSession.id == uuid.UUID(session_id))
+            select(ChatSession).where(ChatSession.id == session_id)
         )
         session = result.scalar_one_or_none()
         if not session:
@@ -625,7 +625,7 @@ async def get_session(session_id: str):
         # Get funnel events
         events_result = await db.execute(
             select(FunnelEvent)
-            .where(FunnelEvent.session_id == uuid.UUID(session_id))
+            .where(FunnelEvent.session_id == session_id)
             .order_by(FunnelEvent.created_at)
         )
         events = events_result.scalars().all()
@@ -853,7 +853,7 @@ async def stop_ab_test(test_id: str):
     """Stop an active A/B test."""
     async with async_session() as db:
         result = await db.execute(
-            select(ABTest).where(ABTest.id == uuid.UUID(test_id))
+            select(ABTest).where(ABTest.id == test_id)
         )
         test = result.scalar_one_or_none()
         if not test:
@@ -870,7 +870,7 @@ async def ab_test_results(test_id: str):
     """Get comparative results for an A/B test."""
     async with async_session() as db:
         result = await db.execute(
-            select(ABTest).where(ABTest.id == uuid.UUID(test_id))
+            select(ABTest).where(ABTest.id == test_id)
         )
         test = result.scalar_one_or_none()
         if not test:
