@@ -14,12 +14,6 @@ output "postgres_host" {
   sensitive   = true
 }
 
-output "redis_host" {
-  description = "Redis private hostname"
-  value       = digitalocean_database_cluster.redis.private_host
-  sensitive   = true
-}
-
 output "ssh_command" {
   description = "SSH into the droplet"
   value       = "ssh root@${digitalocean_reserved_ip.app.ip_address}"
@@ -27,5 +21,5 @@ output "ssh_command" {
 
 output "deploy_instructions" {
   description = "How to deploy the app"
-  value       = "SSH in with: ssh root@${digitalocean_reserved_ip.app.ip_address} then run: /opt/donate/deploy.sh"
+  value       = "Run: ./deploy.sh ${digitalocean_reserved_ip.app.ip_address}"
 }
