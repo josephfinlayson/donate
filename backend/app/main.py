@@ -25,11 +25,10 @@ STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 
 # Optimization trigger thresholds
-BATCH_THRESHOLD = int(os.getenv("OPTIMIZATION_BATCH_THRESHOLD", "200"))
 SCHEDULED_OPTIMIZATION_INTERVAL = int(
     os.getenv("OPTIMIZATION_INTERVAL_SECONDS", "3600")
 )  # default: 1 hour
-MIN_SESSIONS_FOR_SCHEDULED = int(os.getenv("MIN_SESSIONS_FOR_SCHEDULED", "10"))
+MIN_SESSIONS_FOR_OPTIMIZATION = int(os.getenv("MIN_SESSIONS_FOR_OPTIMIZATION", "20"))
 ROLLBACK_CHECK_SESSIONS = int(os.getenv("ROLLBACK_CHECK_SESSIONS", "50"))
 ROLLBACK_SCORE_THRESHOLD = float(os.getenv("ROLLBACK_SCORE_THRESHOLD", "0.7"))
 
@@ -171,7 +170,7 @@ async def scheduled_optimization_loop():
                 result = await db.execute(query)
                 sessions_since = result.scalar()
 
-            if sessions_since >= MIN_SESSIONS_FOR_SCHEDULED:
+            if sessions_since >= MIN_SESSIONS_FOR_OPTIMIZATION:
                 await run_optimization_background("scheduled")
 
         except Exception as e:
@@ -283,40 +282,6 @@ async def compute_and_store_score(session_id: str):
             return session.composite_score
     return None
 
-
-async def check_optimization_trigger():
-    """Check if we should trigger an optimization run.
-
-    Triggers:
-    1. Batch threshold: N completed sessions since last optimization
-    2. Donation event: immediate trigger on donation (rare, high-signal)
-
-    Returns trigger reason or None.
-    """
-    async with async_session() as db:
-        # Get the last optimization run
-        last_run = await db.execute(
-            select(OptimizationRun)
-            .order_by(OptimizationRun.created_at.desc())
-            .limit(1)
-        )
-        last_run = last_run.scalar_one_or_none()
-
-        # Count completed sessions since last run
-        query = select(func.count(ChatSession.id)).where(
-            ChatSession.status == "completed",
-            ChatSession.composite_score.is_not(None),
-        )
-        if last_run:
-            query = query.where(ChatSession.completed_at > last_run.created_at)
-
-        result = await db.execute(query)
-        sessions_since = result.scalar()
-
-        if sessions_since >= BATCH_THRESHOLD:
-            return "batch_threshold"
-
-    return None
 
 
 # --- Socket.IO Events ---
@@ -491,11 +456,6 @@ async def disconnect(sid):
     # Compute composite score
     score = await compute_and_store_score(session_id)
     print(f"Session {session_id} completed (score={score})", flush=True)
-
-    # Check if we should trigger optimization
-    trigger = await check_optimization_trigger()
-    if trigger:
-        asyncio.create_task(run_optimization_background(trigger))
 
 
 # --- Stripe Webhooks ---
@@ -735,7 +695,7 @@ async def get_stats():
             ),
             "prompt_versions": versions,
             "sessions_since_last_optimization": sessions_since,
-            "optimization_threshold": BATCH_THRESHOLD,
+            "optimization_threshold": MIN_SESSIONS_FOR_OPTIMIZATION,
         }
 
 
