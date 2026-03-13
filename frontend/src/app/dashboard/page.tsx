@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 
-const API = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8080";
+const API = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:8080";
 
 interface Stats {
   total_sessions: number;
