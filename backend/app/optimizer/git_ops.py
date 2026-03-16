@@ -11,18 +11,23 @@ from pathlib import Path
 
 GIT_REPO_DIR = Path(os.getenv("PROMPT_REPO_DIR", "/app/prompt_repo"))
 PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
+GITHUB_REPO = os.getenv("GITHUB_REPO", "git@github.com:josephfinlayson/donate.git")
+SSH_KEY_PATH = os.getenv("SSH_KEY_PATH", "/app/.ssh/deploy_key")
+
+# SSH command that uses the deploy key and skips host key checking
+GIT_SSH_COMMAND = f"ssh -i {SSH_KEY_PATH} -o StrictHostKeyChecking=no"
 
 
 def ensure_repo():
-    """Ensure the prompt git repo exists."""
+    """Ensure the prompt git repo exists and has the GitHub remote."""
+    import subprocess
+
     GIT_REPO_DIR.mkdir(parents=True, exist_ok=True)
     (GIT_REPO_DIR / "prompts").mkdir(exist_ok=True)
     (GIT_REPO_DIR / "prompts" / "history").mkdir(exist_ok=True)
     (GIT_REPO_DIR / "runs").mkdir(exist_ok=True)
 
     if not (GIT_REPO_DIR / ".git").exists():
-        import subprocess
-
         subprocess.run(["git", "init"], cwd=GIT_REPO_DIR, check=True)
         subprocess.run(
             ["git", "config", "user.email", "optimizer@donate.bot"],
@@ -31,6 +36,26 @@ def ensure_repo():
         )
         subprocess.run(
             ["git", "config", "user.name", "GEPA Optimizer"],
+            cwd=GIT_REPO_DIR,
+            check=True,
+        )
+
+    # Ensure GitHub remote exists
+    result = subprocess.run(
+        ["git", "remote", "get-url", "origin"],
+        cwd=GIT_REPO_DIR,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        subprocess.run(
+            ["git", "remote", "add", "origin", GITHUB_REPO],
+            cwd=GIT_REPO_DIR,
+            check=True,
+        )
+    elif result.stdout.strip() != GITHUB_REPO:
+        subprocess.run(
+            ["git", "remote", "set-url", "origin", GITHUB_REPO],
             cwd=GIT_REPO_DIR,
             check=True,
         )
@@ -146,5 +171,21 @@ def commit_optimization_run(
         cwd=GIT_REPO_DIR,
         check=True,
     )
+
+    # Push to GitHub
+    try:
+        env = {**os.environ, "GIT_SSH_COMMAND": GIT_SSH_COMMAND}
+        # Push prompt_repo contents to a dedicated branch
+        subprocess.run(
+            ["git", "push", "-u", "origin", "HEAD:prompt-evolution"],
+            cwd=GIT_REPO_DIR,
+            check=True,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        print(f"Pushed optimization run to prompt-evolution branch", flush=True)
+    except subprocess.CalledProcessError as e:
+        print(f"Git push failed: {e.stderr}", flush=True)
 
     return new_version

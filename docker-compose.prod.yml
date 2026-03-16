@@ -29,6 +29,7 @@ services:
     volumes:
       - prompt_repo:/app/prompt_repo
       - app_data:/app/data
+      - /opt/donate/.ssh:/app/.ssh:ro
     depends_on:
       redis:
         condition: service_healthy
