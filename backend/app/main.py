@@ -294,7 +294,32 @@ async def connect(sid, environ):
 
 @sio.event
 async def start_session(sid, data):
-    """Initialize a new chat session."""
+    """Initialize or resume a chat session."""
+    existing_id = data.get("session_id") if isinstance(data, dict) else None
+
+    # Try to resume an existing session
+    if existing_id:
+        async with async_session() as db:
+            result = await db.execute(
+                select(ChatSession).where(ChatSession.id == existing_id)
+            )
+            existing = result.scalar_one_or_none()
+            if existing and existing.status == "active":
+                active_sessions[sid] = existing_id
+                # Send back existing messages (skip the synthetic "Hi" messages)
+                chat_messages = [
+                    m for m in (existing.messages or [])
+                    if not (m["role"] == "user" and m["content"] == "Hi, I just arrived at the page.")
+                ]
+                await sio.emit(
+                    "session_resumed",
+                    {"session_id": existing_id, "messages": chat_messages},
+                    room=sid,
+                )
+                print(f"Session {existing_id} resumed", flush=True)
+                return
+
+    # Create a new session
     session_id = str(uuid.uuid4())
     active_sessions[sid] = session_id
 

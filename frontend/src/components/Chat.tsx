@@ -42,12 +42,20 @@ export function Chat() {
       setIsConnected(true);
       if (!sessionStarted.current) {
         sessionStarted.current = true;
-        socket.emit("start_session", {});
+        const savedSessionId = localStorage.getItem("chat_session_id");
+        socket.emit("start_session", { session_id: savedSessionId });
       }
     });
 
     socket.on("session_started", (data: { session_id: string; message: string }) => {
+      localStorage.setItem("chat_session_id", data.session_id);
       setMessages([{ role: "bot", content: data.message }]);
+      setIsLoading(false);
+    });
+
+    socket.on("session_resumed", (data: { session_id: string; messages: Message[] }) => {
+      localStorage.setItem("chat_session_id", data.session_id);
+      setMessages(data.messages);
       setIsLoading(false);
     });
 
