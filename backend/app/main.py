@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import select, func, Integer
 
-from .chat import get_bot_response, load_prompt, build_system_prompt
+from .chat import get_bot_response, stream_bot_response, load_prompt, build_system_prompt
 from .database import async_session, engine, Base
 from .metrics import composite_score, session_to_record
 from .models import ChatSession, FunnelEvent, OptimizationRun, ABTest
@@ -406,7 +406,13 @@ async def send_message(sid, data):
         # Get bot response using the session's assigned prompt version
         session_prompt = load_prompt_version(session.prompt_version)
         system_prompt = build_system_prompt(session_prompt) if session_prompt else None
-        bot_response = await get_bot_response(messages, system_prompt=system_prompt)
+
+        # Stream the response to the client
+        bot_response = ""
+        async for chunk in stream_bot_response(messages, system_prompt=system_prompt):
+            bot_response += chunk
+            await sio.emit("bot_chunk", {"chunk": chunk}, room=sid)
+
         messages.append({"role": "bot", "content": bot_response})
 
         session.messages = messages
@@ -435,11 +441,11 @@ async def send_message(sid, data):
             except Exception as e:
                 print(f"Stripe checkout creation failed: {e}", flush=True)
 
-    response_data = {"message": bot_response}
+    done_data: dict = {}
     if checkout_url:
-        response_data["checkout_url"] = checkout_url
+        done_data["checkout_url"] = checkout_url
 
-    await sio.emit("bot_message", response_data, room=sid)
+    await sio.emit("bot_message_done", done_data, room=sid)
 
 
 @sio.event

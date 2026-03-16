@@ -33,6 +33,7 @@ export function Chat() {
   const socketRef = useRef<Socket | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const sessionStarted = useRef(false);
+  const streamingMsg = useRef<Message | null>(null);
 
   useEffect(() => {
     const socket = io(BACKEND_URL, { transports: ["websocket", "polling"] });
@@ -59,11 +60,33 @@ export function Chat() {
       setIsLoading(false);
     });
 
-    socket.on("bot_message", (data: { message: string; checkout_url?: string }) => {
-      setMessages((prev) => [
-        ...prev,
-        { role: "bot", content: data.message, checkoutUrl: data.checkout_url },
-      ]);
+    socket.on("bot_chunk", (data: { chunk: string }) => {
+      setMessages((prev) => {
+        const last = prev[prev.length - 1];
+        if (last && last.role === "bot" && !last.checkoutUrl && last === streamingMsg.current) {
+          // Append to the current streaming message
+          const updated = { ...last, content: last.content + data.chunk };
+          streamingMsg.current = updated;
+          return [...prev.slice(0, -1), updated];
+        }
+        // Start a new bot message for streaming
+        const newMsg: Message = { role: "bot", content: data.chunk };
+        streamingMsg.current = newMsg;
+        return [...prev, newMsg];
+      });
+    });
+
+    socket.on("bot_message_done", (data: { checkout_url?: string }) => {
+      streamingMsg.current = null;
+      if (data.checkout_url) {
+        setMessages((prev) => {
+          const last = prev[prev.length - 1];
+          if (last && last.role === "bot") {
+            return [...prev.slice(0, -1), { ...last, checkoutUrl: data.checkout_url }];
+          }
+          return prev;
+        });
+      }
       setIsLoading(false);
     });
 

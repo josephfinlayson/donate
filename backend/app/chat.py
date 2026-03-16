@@ -26,6 +26,16 @@ async def get_bot_response(
     messages: list[dict], system_prompt: str | None = None
 ) -> str:
     """Get a response from Claude given conversation history."""
+    full_text = ""
+    async for _chunk in stream_bot_response(messages, system_prompt):
+        full_text += _chunk
+    return full_text
+
+
+async def stream_bot_response(
+    messages: list[dict], system_prompt: str | None = None
+):
+    """Stream a response from Claude, yielding text chunks."""
     if system_prompt is None:
         prompt_data = load_prompt()
         system_prompt = build_system_prompt(prompt_data)
@@ -36,10 +46,11 @@ async def get_bot_response(
         role = "assistant" if msg["role"] == "bot" else "user"
         anthropic_messages.append({"role": role, "content": msg["content"]})
 
-    response = await client.messages.create(
+    async with client.messages.stream(
         model="claude-sonnet-4-6",
         max_tokens=1024,
         system=system_prompt,
         messages=anthropic_messages,
-    )
-    return response.content[0].text
+    ) as stream:
+        async for text in stream.text_stream:
+            yield text
