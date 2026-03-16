@@ -19,46 +19,43 @@ GIT_SSH_COMMAND = f"ssh -i {SSH_KEY_PATH} -o StrictHostKeyChecking=no"
 
 
 def ensure_repo():
-    """Ensure the prompt git repo exists and has the GitHub remote."""
+    """Ensure we have a clone of the main repo to commit into."""
     import subprocess
 
-    GIT_REPO_DIR.mkdir(parents=True, exist_ok=True)
-    (GIT_REPO_DIR / "prompts").mkdir(exist_ok=True)
-    (GIT_REPO_DIR / "prompts" / "history").mkdir(exist_ok=True)
-    (GIT_REPO_DIR / "runs").mkdir(exist_ok=True)
+    env = {**os.environ, "GIT_SSH_COMMAND": GIT_SSH_COMMAND}
 
     if not (GIT_REPO_DIR / ".git").exists():
-        subprocess.run(["git", "init"], cwd=GIT_REPO_DIR, check=True)
+        # Clone the main repo so we share commit history
+        GIT_REPO_DIR.mkdir(parents=True, exist_ok=True)
         subprocess.run(
-            ["git", "config", "user.email", "optimizer@donate.bot"],
-            cwd=GIT_REPO_DIR,
+            ["git", "clone", "--depth=1", GITHUB_REPO, str(GIT_REPO_DIR)],
             check=True,
-        )
-        subprocess.run(
-            ["git", "config", "user.name", "GEPA Optimizer"],
-            cwd=GIT_REPO_DIR,
-            check=True,
+            env=env,
         )
 
-    # Ensure GitHub remote exists
-    result = subprocess.run(
-        ["git", "remote", "get-url", "origin"],
+    subprocess.run(
+        ["git", "config", "user.email", "optimizer@donate.bot"],
         cwd=GIT_REPO_DIR,
-        capture_output=True,
-        text=True,
+        check=True,
     )
-    if result.returncode != 0:
-        subprocess.run(
-            ["git", "remote", "add", "origin", GITHUB_REPO],
-            cwd=GIT_REPO_DIR,
-            check=True,
-        )
-    elif result.stdout.strip() != GITHUB_REPO:
-        subprocess.run(
-            ["git", "remote", "set-url", "origin", GITHUB_REPO],
-            cwd=GIT_REPO_DIR,
-            check=True,
-        )
+    subprocess.run(
+        ["git", "config", "user.name", "GEPA Optimizer"],
+        cwd=GIT_REPO_DIR,
+        check=True,
+    )
+
+    # Pull latest to stay up to date
+    subprocess.run(
+        ["git", "pull", "--rebase", "origin", "master"],
+        cwd=GIT_REPO_DIR,
+        check=True,
+        env=env,
+        capture_output=True,
+    )
+
+    # Ensure directories exist
+    (GIT_REPO_DIR / "prompt_evolution" / "prompts" / "history").mkdir(parents=True, exist_ok=True)
+    (GIT_REPO_DIR / "prompt_evolution" / "runs").mkdir(parents=True, exist_ok=True)
 
 
 def bump_version(current_version: str) -> str:
@@ -89,8 +86,9 @@ def commit_optimization_run(
 
     ensure_repo()
 
+    evo_dir = GIT_REPO_DIR / "prompt_evolution"
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M")
-    run_dir = GIT_REPO_DIR / "runs" / timestamp
+    run_dir = evo_dir / "runs" / timestamp
     run_dir.mkdir(parents=True, exist_ok=True)
 
     # Write run artifacts
@@ -133,7 +131,6 @@ def commit_optimization_run(
     if deploy:
         new_version = bump_version(new_version)
 
-        # Create new prompt
         new_prompt = {
             "version": new_version,
             "immutable_constraints": current_prompt.get("immutable_constraints", ""),
@@ -145,13 +142,13 @@ def commit_optimization_run(
             "parent_version": current_prompt.get("version"),
         }
 
-        # Save to prompt repo
+        # Save to prompt evolution history in the repo
         with open(
-            GIT_REPO_DIR / "prompts" / "history" / f"{new_version}.json", "w"
+            evo_dir / "prompts" / "history" / f"{new_version}.json", "w"
         ) as f:
             json.dump(new_prompt, f, indent=2)
 
-        with open(GIT_REPO_DIR / "prompts" / "current.json", "w") as f:
+        with open(evo_dir / "prompts" / "current.json", "w") as f:
             json.dump(new_prompt, f, indent=2)
 
         # Also update the live prompt used by the backend
