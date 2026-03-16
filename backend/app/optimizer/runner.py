@@ -31,8 +31,9 @@ def session_to_dspy_examples(session: dict) -> list[dspy.Example]:
     donated = session.get("donated", False)
     donation_amount = session.get("donation_amount_usd", 0)
     total_messages = len(messages)
-    payment_link_shown = session.get("funnel", {}).get("payment_link_shown", False)
     clicked_link = session.get("funnel", {}).get("clicked_payment_link", False)
+    started_checkout = session.get("funnel", {}).get("started_checkout", False)
+    asked_about_charity = session.get("asked_about_charity", False)
 
     examples = []
     history_parts = []
@@ -50,15 +51,24 @@ def session_to_dspy_examples(session: dict) -> list[dspy.Example]:
                 turns_remaining = (total_messages - (i + 2)) // 2  # user-bot pairs left
                 turn_number = len(history_parts) // 2 + 1
 
-                # Build feedback describing what happened after this point
+                total_turns = total_messages // 2
+
+                # Build feedback and score for this turn
                 feedback = _build_feedback(
                     turn_number=turn_number,
                     turns_remaining=turns_remaining,
-                    total_turns=total_messages // 2,
+                    total_turns=total_turns,
                     donated=donated,
                     donation_amount=donation_amount,
-                    payment_link_shown=payment_link_shown,
                     clicked_link=clicked_link,
+                )
+                score = _compute_turn_score(
+                    total_turns=total_turns,
+                    donated=donated,
+                    donation_amount=donation_amount,
+                    clicked_link=clicked_link,
+                    started_checkout=started_checkout,
+                    asked_about_charity=asked_about_charity,
                 )
 
                 example = dspy.Example(
@@ -68,8 +78,7 @@ def session_to_dspy_examples(session: dict) -> list[dspy.Example]:
                 ).with_inputs("conversation_history", "user_message")
 
                 example.feedback_text = feedback
-                example.donated = donated
-                example.score_value = 1.0 if donated else 0.0
+                example.score_value = score
 
                 examples.append(example)
 
@@ -86,13 +95,60 @@ def session_to_dspy_examples(session: dict) -> list[dspy.Example]:
     return examples
 
 
+def _compute_turn_score(
+    total_turns: int,
+    donated: bool,
+    donation_amount: float,
+    clicked_link: bool,
+    started_checkout: bool,
+    asked_about_charity: bool,
+) -> float:
+    """Compute a score for this turn based on overall session outcome.
+
+    Every turn in a conversation gets the same score — the whole conversation
+    contributed to the outcome, not just individual turns.
+
+    Rewards (additive):
+    - Engagement: total_turns / 10 (capped at 1.0)
+    - Asked about charity: +0.3 (curiosity signal)
+    - Clicked link: +0.5 (active interest)
+    - Started checkout: +0.3 (commitment signal)
+    - Donated: +3.0 (primary goal, dominates all other signals)
+    - Donation amount: +min(amount / 10, 5.0)
+
+    Max possible ~10.1. Donation always dominates engagement.
+    """
+    score = 0.0
+
+    # Engagement: longer conversations = better (cap at 10 turns)
+    score += min(total_turns / 10, 1.0)
+
+    # User asked about the charity
+    if asked_about_charity:
+        score += 0.3
+
+    # User actively clicked the payment link
+    if clicked_link:
+        score += 0.5
+
+    # User started the checkout flow
+    if started_checkout:
+        score += 0.3
+
+    # User donated
+    if donated:
+        score += 3.0
+        score += min(donation_amount / 10, 5.0)
+
+    return score
+
+
 def _build_feedback(
     turn_number: int,
     turns_remaining: int,
     total_turns: int,
     donated: bool,
     donation_amount: float,
-    payment_link_shown: bool,
     clicked_link: bool,
 ) -> str:
     """Build forward-looking feedback for a specific point in the conversation."""
@@ -101,13 +157,12 @@ def _build_feedback(
     parts.append(f"This is turn {turn_number} of {total_turns} in the conversation.")
 
     if donated:
-        turns_until_payment = turns_remaining  # approximate
-        if turns_until_payment <= 1:
+        if turns_remaining <= 1:
             parts.append(f"The user donated ${donation_amount:.0f} very shortly after this exchange. This response was highly effective.")
-        elif turns_until_payment <= 3:
-            parts.append(f"The user donated ${donation_amount:.0f} within {turns_until_payment} turns after this point. The conversation was moving in the right direction.")
+        elif turns_remaining <= 3:
+            parts.append(f"The user donated ${donation_amount:.0f} within {turns_remaining} turns after this point. The conversation was moving in the right direction.")
         else:
-            parts.append(f"The user eventually donated ${donation_amount:.0f}, but it took {turns_until_payment} more turns. Earlier and more direct persuasion may have helped.")
+            parts.append(f"The user eventually donated ${donation_amount:.0f}, but it took {turns_remaining} more turns.")
     else:
         parts.append("The user did NOT donate in this session.")
 
@@ -116,19 +171,11 @@ def _build_feedback(
     else:
         parts.append("The user left after this exchange.")
 
-    if payment_link_shown:
-        if clicked_link:
-            if not donated:
-                parts.append("The user clicked the payment link but did not complete the donation — they were close but something stopped them.")
-            else:
-                parts.append("The user clicked the payment link and completed the donation.")
+    if clicked_link:
+        if not donated:
+            parts.append("The user clicked the payment link but did not complete the donation — they were close.")
         else:
-            parts.append("A payment link was shown but the user did not click it.")
-    else:
-        if total_turns <= 2:
-            parts.append("The conversation was too short for a payment link to be shown.")
-        else:
-            parts.append("No payment link was shown during this session.")
+            parts.append("The user clicked the payment link and completed the donation.")
 
     return " ".join(parts)
 
@@ -138,8 +185,9 @@ def conversation_metric(gold, pred, trace=None, pred_name=None, pred_trace=None)
 
     Returns dspy.Prediction(score, feedback) so GEPA's reflection LM
     can understand what happened in the conversation and why.
-    The score is simple (donated=1, didn't=0). The feedback is where
-    the real signal lives.
+
+    Score is a continuous value combining engagement depth, link clicks,
+    and donations. Feedback provides the rich context for reflection.
     """
     feedback = getattr(gold, "feedback_text", "No feedback available.")
     score = getattr(gold, "score_value", 0.0)
@@ -172,6 +220,9 @@ def run_gepa_optimization(
         temperature=1.0,
     )
     dspy.configure(lm=lm)
+
+    # Filter out low-signal sessions (need at least one user→bot exchange beyond greeting)
+    sessions = [s for s in sessions if s.get("message_count", 0) >= 3]
 
     # Convert sessions to DSPy examples (multiple per session)
     examples = []
