@@ -20,12 +20,32 @@ GIT_SSH_COMMAND = f"ssh -i {SSH_KEY_PATH} -o StrictHostKeyChecking=no"
 
 def ensure_repo():
     """Ensure we have a clone of the main repo to commit into."""
+    import shutil
     import subprocess
 
     env = {**os.environ, "GIT_SSH_COMMAND": GIT_SSH_COMMAND}
 
-    if not (GIT_REPO_DIR / ".git").exists():
-        # Clone the main repo so we share commit history
+    needs_clone = not (GIT_REPO_DIR / ".git").exists()
+
+    # Check if existing repo has the correct remote (not a leftover standalone repo)
+    if not needs_clone:
+        result = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            cwd=GIT_REPO_DIR,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0 or GITHUB_REPO not in result.stdout.strip():
+            print(f"Stale prompt_repo detected (remote: {result.stdout.strip()!r}), re-cloning", flush=True)
+            # Clear contents (can't rmtree a Docker volume mount)
+            for item in GIT_REPO_DIR.iterdir():
+                if item.is_dir():
+                    shutil.rmtree(item)
+                else:
+                    item.unlink()
+            needs_clone = True
+
+    if needs_clone:
         GIT_REPO_DIR.mkdir(parents=True, exist_ok=True)
         subprocess.run(
             ["git", "clone", "--depth=1", GITHUB_REPO, str(GIT_REPO_DIR)],
