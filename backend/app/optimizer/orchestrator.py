@@ -27,8 +27,12 @@ from .runner import run_gepa_optimization
 API_URL = os.getenv("API_URL", "http://localhost:8000")
 
 
-async def fetch_sessions(status: str = "completed", limit: int = 500) -> list[dict]:
-    """Fetch session records from the API."""
+async def fetch_sessions(status: str = "completed", limit: int = 30) -> list[dict]:
+    """Fetch the most recent session records from the API.
+
+    Uses a sliding window (default 100) so old sessions age out
+    and GEPA focuses on the most recent conversation data.
+    """
     async with httpx.AsyncClient() as client:
         resp = await client.get(
             f"{API_URL}/api/sessions",
