@@ -164,6 +164,7 @@ def commit_optimization_run(
     commit_msg = (
         f"{'Deploy' if deploy else 'Skip'} {new_version}: "
         f"{optimization_result.get('metrics', {}).get('sessions_count', 0)} sessions"
+        f"\n\n[skip ci]"
     )
 
     subprocess.run(
@@ -177,14 +178,14 @@ def commit_optimization_run(
         env = {**os.environ, "GIT_SSH_COMMAND": GIT_SSH_COMMAND}
         # Push prompt_repo contents to a dedicated branch
         subprocess.run(
-            ["git", "push", "-u", "origin", "HEAD:prompt-evolution"],
+            ["git", "push", "-u", "origin", "HEAD:master"],
             cwd=GIT_REPO_DIR,
             check=True,
             env=env,
             capture_output=True,
             text=True,
         )
-        print(f"Pushed optimization run to prompt-evolution branch", flush=True)
+        print(f"Pushed optimization run to master", flush=True)
     except subprocess.CalledProcessError as e:
         print(f"Git push failed: {e.stderr}", flush=True)
 
