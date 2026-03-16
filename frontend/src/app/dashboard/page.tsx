@@ -141,13 +141,6 @@ export default function Dashboard() {
             >
               Refresh
             </button>
-            <button
-              onClick={triggerOptimization}
-              disabled={optimizing}
-              className="px-3 py-1.5 text-sm bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50 transition"
-            >
-              {optimizing ? "Running GEPA..." : "Run Optimization"}
-            </button>
           </div>
         </div>
 
